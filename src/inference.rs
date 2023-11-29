@@ -1,16 +1,46 @@
-mod models;
+pub mod models;
 
+use candle_core::{Result, Tensor};
+use models::{BertConfig, BertModel, RobertaConfig, RobertaModel};
 use std::path::PathBuf;
-use anyhow::{anyhow, Result, Error};
-use candle_core::{Tensor, Device};
-use tokenizers::{PaddingParams, Tokenizer};
-use candle_transformers::models::bert::{BertModel, Config as BertConfig, DTYPE};
-use candle_nn::VarBuilder;
-use models::{Model, ModelConfig, ModelInput, RobertaConfig, RobertaModel};
-use hf_hub::{api::sync::Api, Repo, RepoType};
-use serde_json::Value;
 
+#[derive(Debug)]
+pub struct ModelInput {
+    pub token_ids: Tensor,
+    pub token_type_ids: Tensor,
+}
 
+#[derive(Debug)]
+pub struct Batch {
+    pub input_ids: Vec<u32>,
+    pub token_type_ids: Vec<u32>,
+    pub position_ids: Vec<u32>,
+    pub cumulative_seq_lengths: Vec<u32>,
+    pub max_length: u32,
+}
+
+pub enum WeigthBackend {
+    PyTorch(PathBuf),
+    SafeTensors(PathBuf),
+}
+pub enum ModelConfig {
+    Bert(BertConfig),
+    Roberta(RobertaConfig),
+}
+
+pub trait Model {
+    fn embed_single(&self, _input: ModelInput) -> Result<Tensor> {
+        candle_core::bail!("`embed_single` is not implemented for this model");
+    }
+
+    fn embed(&self, _batch: Batch) -> Result<Tensor> {
+        candle_core::bail!("`embed` is not implemented for this model");
+    }
+
+    fn predict(&self, _batch: Batch) -> Result<Tensor> {
+        candle_core::bail!("`predict is not implemented for this model");
+    }
+}
 
 impl Model for BertModel {
     fn embed_single(&self, input: ModelInput) -> candle_core::Result<candle_core::Tensor> {
@@ -22,140 +52,4 @@ impl Model for RobertaModel {
     fn embed_single(&self, input: ModelInput) -> candle_core::Result<candle_core::Tensor> {
         self.forward(&input.token_ids, &input.token_type_ids)
     }
-
-}
-
-pub enum WeigthBackend {
-    PyTorch(PathBuf),
-    SafeTensors(PathBuf),
-}
-
-pub struct PredictorConfig {
-    pub tokenizer_config: PathBuf,
-    pub model_weights: WeigthBackend,
-    pub model_config: ModelConfig,
-}
-
-impl PredictorConfig {
-    pub fn load(model_id: Option<String>, revision: Option<String>) -> Result<Self> {
-        let default_model = "intfloat/multilingual-e5-base".to_string();
-        let default_revision = "main".to_string();
-
-        let (model_id, revision) = match (model_id.to_owned(), revision.to_owned()) {
-            (Some(model_id), Some(revision)) => (model_id, revision),
-            (Some(model_id), None) => (model_id, "main".to_string()),
-            (None, Some(revision)) => (default_model, revision),
-            (None, None) => (default_model, default_revision),
-        };
-
-        let repo = Repo::with_revision(model_id, RepoType::Model, revision);
-        let (config_filename, tokenizer_config, model_weights) = {
-            let api = Api::new()?;
-            let api = api.repo(repo);
-            let config = api.get("config.json")?;
-            let tokenizer = api.get("tokenizer.json")?;
-            let weights = match api.get("pytorch_model.bin") {
-                Ok(weights) => WeigthBackend::PyTorch(weights),
-                Err(err) => {
-                    WeigthBackend::SafeTensors(api.get("model.safetensors")?) // TODO add error handling
-                }
-            };
-            (config, tokenizer, weights)
-        };
-
-        let config = std::fs::read_to_string(config_filename)?;
-        
-        let model_config= match get_model_type(&config).as_deref() {
-                Some("bert") => ModelConfig::Bert(serde_json::from_str::<BertConfig>(&config)?),
-                Some("xlm-roberta" | "roberta") => ModelConfig::Roberta(serde_json::from_str::<RobertaConfig>(&config)?),
-                Some(model_type) => return Err(anyhow!("Model {:?} is not supported", model_type)),
-                None => return Err(anyhow!("No model_type found in model config")),
-            };
-        
-        Ok(Self { 
-            tokenizer_config, 
-            model_weights,
-            model_config
-        })
-    }
-}
-pub struct Predictor {
-    pub tokenizer: Tokenizer,
-    pub model: Box<dyn Model>,
-}
-
-impl Predictor {
-    pub fn load(config: &PredictorConfig) -> Result<Self> {
-        // load tokenizer
-        let mut tokenizer = Tokenizer::from_file(&config.tokenizer_config).map_err(Error::msg)?;
-        // TODO: add tokenizer config
-        // some questionable implementaion of parameters access
-
-        // initialize VarBuilder
-        let vb = match &config.model_weights {
-            WeigthBackend::PyTorch(path) => {
-                VarBuilder::from_pth(&path, DTYPE, &Device::Cpu)?
-            },
-            WeigthBackend::SafeTensors(path) => {
-                unsafe { 
-                    VarBuilder::from_mmaped_safetensors(&[path], DTYPE, &Device::Cpu)? 
-                }
-            }
-        };
-
-        // load the model according to the config
-        let model: Box<dyn Model + Send> = match &config.model_config {
-            ModelConfig::Bert(config) => Box::new(BertModel::load(vb, &config)?),
-            ModelConfig::Roberta(config) => Box::new(RobertaModel::load(vb, &config)?),
-        };
-
-        Ok(Self { 
-            tokenizer,
-            model, 
-        })
-    }
-
-    pub fn process_single(&mut self, input_text: String) -> Result<Tensor> {
-        // tokenise the input
-        let tokenizer = self.tokenizer
-            .with_padding(None)
-            .with_truncation(None)
-            .map_err(Error::msg)?;
-        let tokens = tokenizer
-            .encode(input_text, true)
-            .map_err(Error::msg)?
-            .get_ids()
-            .to_vec();
-        let token_ids = Tensor::new(&tokens[..], &Device::Cpu)?.unsqueeze(0)?;
-        let token_type_ids = token_ids.zeros_like()?;
-
-        // buld model input
-        let model_input = ModelInput {
-            token_ids,
-            token_type_ids,
-        };
-
-        //  apply model to tokenized input
-        let ys = self.model.embed_single(model_input)?;
-
-        // apply mean pooling 
-        let (_n_sentence, n_tokens, _hidden_size) = ys.dims3()?;
-        let embeddings = (ys.sum(1)? / (n_tokens as f64))?;
-        normalize_l2(&embeddings)
-
-    }
-}
-
-fn get_model_type(config_str: &String) -> Option<String> {
-    // TODO: add error handling
-    let config_json: Value = serde_json::from_str(config_str)
-        .expect("problem parsing model config.json");
-    config_json
-        .get("model_type")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-}
-
-pub fn normalize_l2(v: &Tensor) -> Result<Tensor> {
-    Ok(v.broadcast_div(&v.sqr()?.sum_keepdim(1)?.sqrt()?)?)
 }

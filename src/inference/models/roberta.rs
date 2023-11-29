@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use candle_core::{DType, Device, Result, Tensor};
+use candle_nn::{embedding, layer_norm, linear, Activation, Dropout, LayerNorm, Linear};
 use candle_nn::{Embedding, Module, VarBuilder};
-use candle_nn::{LayerNorm, Linear, Dropout, Activation, embedding, linear, layer_norm};
 
 use serde::Deserialize;
 
@@ -10,7 +10,6 @@ pub const FLOATING_DTYPE: DType = DType::F32;
 pub const LONG_DTYPE: DType = DType::I64;
 
 pub const TRAIN: bool = false;
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -43,7 +42,7 @@ pub struct RobertaConfig {
     problem_type: Option<String>,
     _num_labels: Option<usize>,
     id2label: Option<HashMap<String, String>>,
-    label2id: Option<HashMap<String, usize>>
+    label2id: Option<HashMap<String, usize>>,
 }
 
 impl Default for RobertaConfig {
@@ -70,7 +69,7 @@ impl Default for RobertaConfig {
             problem_type: None,
             _num_labels: Some(3),
             id2label: None,
-            label2id: None
+            label2id: None,
         }
     }
 }
@@ -121,7 +120,6 @@ pub fn create_position_ids_from_input_ids(
 
     Ok(incremental_indices)
 }
-
 
 pub struct RobertaEmbeddings {
     word_embeddings: Embedding,
@@ -461,7 +459,6 @@ impl RobertaEncoder {
         Ok(hidden_states)
     }
 }
-
 
 pub struct RobertaModel {
     embeddings: RobertaEmbeddings,

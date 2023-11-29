@@ -18,5 +18,10 @@
         "titleBar.inactiveBackground": "#341e9399",
         "titleBar.inactiveForeground": "#e7e7e799"
     },
-    "peacock.remoteColor": "#341e93"
+    "peacock.remoteColor": "#341e93",
+    "rust-analyzer.linkedProjects": [
+        "./Cargo.toml",
+        "./Cargo.toml",
+        "./Cargo.toml"
+    ]
 }

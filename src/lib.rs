@@ -5,7 +5,7 @@ use candle_core::{Device, Tensor};
 use candle_nn::VarBuilder;
 use hf_hub::{api::sync::Api, Repo, RepoType};
 use inference::models::{BertConfig, BertModel, RobertaConfig, RobertaModel, DTYPE};
-use inference::{Model, ModelConfig, ModelInput, WeigthBackend};
+pub use inference::{Model, ModelConfig, ModelInput, WeigthBackend};
 use serde_json::Value;
 use std::path::PathBuf;
 use tokenizers::{PaddingParams, Tokenizer};
@@ -63,7 +63,7 @@ impl PredictorConfig {
 }
 pub struct Predictor {
     pub tokenizer: Tokenizer,
-    pub model: Box<dyn Model>,
+    pub model: Box<dyn Model + Send>,
 }
 
 impl Predictor {

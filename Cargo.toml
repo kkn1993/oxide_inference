@@ -1,3 +1,7 @@
+[profile.release]
+debug = true
+opt-level = 3
+
 [package]
 name = "inference_server"
 version = "0.1.0"
